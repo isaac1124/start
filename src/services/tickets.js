@@ -55,7 +55,6 @@ export function subscribeToMyTicket(ownerUid, callback) {
 
   return onSnapshot(ticketQuery, (snapshot) => {
     const tickets = snapshot.docs.map((document) => ({
-      id: document.id,
       ...document.data(),
     }));
 
@@ -67,12 +66,11 @@ export function subscribeToWaitingTickets(callback) {
   const ticketQuery = query(
     collection(db, 'tickets'),
     where('status', '==', 'WAITING'),
-    orderBy('ticketNumber', 'asc')
+    orderBy('createdAt', 'asc')
   );
 
   return onSnapshot(ticketQuery, (snapshot) => {
     const tickets = snapshot.docs.map((document) => ({
-      id: document.id,
       ...document.data(),
     }));
 
@@ -81,11 +79,13 @@ export function subscribeToWaitingTickets(callback) {
 }
 
 export function subscribeToAllTickets(callback) {
-  const ticketQuery = query(collection(db, 'tickets'), orderBy('ticketNumber', 'asc'));
+  const ticketQuery = query(
+    collection(db, 'tickets'),
+    orderBy('createdAt', 'asc')
+  );
 
   return onSnapshot(ticketQuery, (snapshot) => {
     const tickets = snapshot.docs.map((document) => ({
-      id: document.id,
       ...document.data(),
     }));
 
@@ -95,7 +95,6 @@ export function subscribeToAllTickets(callback) {
 
 export async function createTicket(ownerUid) {
   const settingsRef = doc(db, 'settings', 'system');
-  const newTicketRef = doc(collection(db, 'tickets'));
 
   const result = await runTransaction(db, async (transaction) => {
     const settingsSnapshot = await transaction.get(settingsRef);
@@ -105,14 +104,12 @@ export async function createTicket(ownerUid) {
     }
 
     const settingsData = settingsSnapshot.data();
-    const nextTicketNumber = Number(settingsData.nextTicketNumber ?? 1);
+    const ticketNumber = Number(settingsData.nextTicketNumber ?? 1);
 
-    transaction.update(settingsRef, {
-      nextTicketNumber: nextTicketNumber + 1,
-    });
+    const ticketDocRef = doc(db, 'tickets', String(ticketNumber));
 
     const ticketPayload = {
-      ticketNumber: nextTicketNumber,
+      ticketNumber: ticketNumber,
       ownerUid,
       status: TICKET_STATUS.WAITING,
       createdAt: serverTimestamp(),
@@ -121,11 +118,14 @@ export async function createTicket(ownerUid) {
       completedAt: null,
     };
 
-    transaction.set(newTicketRef, ticketPayload);
+    transaction.set(ticketDocRef, ticketPayload);
+
+    transaction.update(settingsRef, {
+      nextTicketNumber: ticketNumber + 1,
+    });
 
     return {
-      ticketId: newTicketRef.id,
-      ticketNumber: nextTicketNumber,
+      ticketNumber,
     };
   });
 
@@ -133,10 +133,9 @@ export async function createTicket(ownerUid) {
 }
 
 export async function getTicketByNumber(ticketNumber) {
-  const ticketsRef = collection(db, 'tickets');
-  const q = query(ticketsRef, where('ticketNumber', '==', Number(ticketNumber)));
+  const ticketRef = doc(db, 'tickets', String(ticketNumber));
+  const snapshot = await getDoc(ticketRef);
 
-  const snapshot = await getDoc(doc(db, 'tickets', ''));
   if (snapshot.exists()) {
     return snapshot.data();
   }
@@ -144,8 +143,8 @@ export async function getTicketByNumber(ticketNumber) {
   return null;
 }
 
-export async function updateTicketStatus(ticketId, nextStatus, additionalData = {}) {
-  const ticketRef = doc(db, 'tickets', ticketId);
+export async function updateTicketStatus(ticketNumber, nextStatus, additionalData = {}) {
+  const ticketRef = doc(db, 'tickets', String(ticketNumber));
   const payload = {
     status: nextStatus,
     ...additionalData,
@@ -168,9 +167,11 @@ export async function getSystemSettings() {
   return snapshot.data();
 }
 
-export async function updateSystemSettings(data) {
+export async function updateCurrentTicketNumber(value) {
   const ref = doc(db, 'settings', 'system');
-  await updateDoc(ref, data);
+  await updateDoc(ref, {
+    currentTicketNumber: Number(value),
+  });
 }
 
 export async function getAdminAccess(uid) {

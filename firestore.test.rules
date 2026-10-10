@@ -1,0 +1,73 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function isAdmin(uid) {
+      return exists(/databases/$(database)/documents/admins/$(uid));
+    }
+
+    // Test: 정상 익명 번호표 발급
+    // 예상: PASS
+    // 동작: 익명 사용자가 transaction을 통해 ticket 생성 및 settings 증가
+
+    // Test: ticket 없이 nextTicketNumber만 +1
+    // 예상: FAIL
+    // 이유: !exists(ticketPath) && existsAfter(ticketPath) 검사로 ticket 반드시 생성 필요
+
+    // Test: 기존 ticket을 이용한 nextTicketNumber 증가
+    // 예상: FAIL
+    // 이유: !exists() 조건으로 기존 ticket 존재 시 실패
+
+    // Test: nextTicketNumber +2 이상
+    // 예상: FAIL
+    // 이유: nextTicketNumber == resource.data.nextTicketNumber + 1 검사
+
+    // Test: 임의 ticketNumber 생성
+    // 예상: FAIL
+    // 이유: ticketNumber == get(settings/system).data.nextTicketNumber 검사
+
+    // Test: 다른 ownerUid로 생성
+    // 예상: FAIL
+    // 이유: ownerUid == request.auth.uid 검사
+
+    // Test: WAITING이 아닌 상태로 생성
+    // 예상: FAIL
+    // 이유: status == 'WAITING' 검사
+
+    // Test: 고객의 상태 변경
+    // 예상: FAIL
+    // 이유: allow update에서 isAdmin() 필수
+
+    // Test: 고객의 currentTicketNumber 변경
+    // 예상: FAIL
+    // 이유: 고객 update 규칙이 settings에 없음 (allow write 없음)
+
+    // Test: 고객의 admins 수정
+    // 예상: FAIL
+    // 이유: admins 업데이트는 isAdmin() 필수
+
+    // Test: 관리자가 ownerUid 변경
+    // 예상: FAIL
+    // 이유: ownerUid == resource.data.ownerUid 검사
+
+    // Test: 관리자가 ticketNumber 변경
+    // 예상: FAIL
+    // 이유: ticketNumber == resource.data.ticketNumber 검사
+
+    // Test: 관리자가 createdAt 변경
+    // 예상: FAIL
+    // 이유: createdAt == resource.data.createdAt 검사
+
+    // Test: 관리자 WAITING -> CALLED
+    // 예상: PASS
+    // 동작: status와 calledAt만 변경 가능
+
+    // Test: 관리자 CALLED -> IN_PROGRESS
+    // 예상: PASS
+    // 동작: status와 startedAt만 변경 가능
+
+    // Test: 관리자 IN_PROGRESS -> COMPLETED
+    // 예상: PASS
+    // 동작: status와 completedAt만 변경 가능
+  }
+}

@@ -6,9 +6,44 @@ service cloud.firestore {
       return exists(/databases/$(database)/documents/admins/$(uid));
     }
 
+    function isValidStatusTransition(oldStatus, newStatus) {
+      return (
+        (oldStatus == 'WAITING' && newStatus in ['CALLED', 'CANCELLED']) ||
+        (oldStatus == 'CALLED' && newStatus in ['IN_PROGRESS', 'CANCELLED']) ||
+        (oldStatus == 'IN_PROGRESS' && newStatus in ['COMPLETED', 'CANCELLED']) ||
+        (oldStatus == 'COMPLETED' && newStatus == 'COMPLETED') ||
+        (oldStatus == 'CANCELLED' && newStatus == 'CANCELLED')
+      );
+    }
+
+    function getValidUpdateFields(oldStatus, newStatus) {
+      return (
+        (oldStatus == 'WAITING' && newStatus == 'CALLED' && ['status', 'calledAt'].toSet()) ||
+        (oldStatus == 'CALLED' && newStatus == 'IN_PROGRESS' && ['status', 'startedAt'].toSet()) ||
+        (oldStatus == 'IN_PROGRESS' && newStatus == 'COMPLETED' && ['status', 'completedAt'].toSet()) ||
+        (oldStatus == 'WAITING' && newStatus == 'CANCELLED' && ['status'].toSet()) ||
+        (oldStatus == 'CALLED' && newStatus == 'CANCELLED' && ['status'].toSet()) ||
+        (oldStatus == 'IN_PROGRESS' && newStatus == 'CANCELLED' && ['status'].toSet())
+      );
+    }
+
     match /settings/{document=**} {
       allow read: if true;
-      allow write: if request.auth != null && isAdmin(request.auth.uid);
+    }
+
+    match /settings/system {
+      allow update: if request.auth != null
+        && !isAdmin(request.auth.uid)
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['nextTicketNumber'])
+        && request.resource.data.nextTicketNumber == resource.data.nextTicketNumber + 1
+        && request.resource.data.currentTicketNumber == resource.data.currentTicketNumber
+        && !exists(/databases/$(database)/documents/tickets/$(resource.data.nextTicketNumber))
+        && existsAfter(/databases/$(database)/documents/tickets/$(resource.data.nextTicketNumber));
+
+      allow update: if request.auth != null
+        && isAdmin(request.auth.uid)
+        && request.resource.data.nextTicketNumber == resource.data.nextTicketNumber
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['currentTicketNumber']);
     }
 
     match /admins/{uid} {
@@ -26,15 +61,28 @@ service cloud.firestore {
 
       allow create: if request.auth != null
         && request.auth.token.firebase.sign_in_provider == 'anonymous'
+        && request.resource.data.keys().hasAll(['ownerUid', 'ticketNumber', 'status', 'createdAt', 'calledAt', 'startedAt', 'completedAt'])
+        && request.resource.data.keys().hasOnly(['ownerUid', 'ticketNumber', 'status', 'createdAt', 'calledAt', 'startedAt', 'completedAt'])
         && request.resource.data.ownerUid == request.auth.uid
-        && request.resource.data.ticketNumber is number
+        && request.resource.data.ticketNumber is int
+        && request.resource.data.ticketNumber == get(/databases/$(database)/documents/settings/system).data.nextTicketNumber
         && request.resource.data.status == 'WAITING'
         && request.resource.data.createdAt is timestamp
         && request.resource.data.calledAt == null
         && request.resource.data.startedAt == null
         && request.resource.data.completedAt == null;
 
-      allow update: if request.auth != null && isAdmin(request.auth.uid);
+      allow update: if request.auth != null
+        && isAdmin(request.auth.uid)
+        && isValidStatusTransition(resource.data.status, request.resource.data.status)
+        && request.resource.data.ownerUid == resource.data.ownerUid
+        && request.resource.data.ticketNumber == resource.data.ticketNumber
+        && request.resource.data.createdAt == resource.data.createdAt
+        && (request.resource.data.status == 'CALLED' && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'calledAt']) ||
+            request.resource.data.status == 'IN_PROGRESS' && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'startedAt']) ||
+            request.resource.data.status == 'COMPLETED' && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'completedAt']) ||
+            request.resource.data.status == 'CANCELLED' && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status']));
+
       allow delete: if request.auth != null && isAdmin(request.auth.uid);
     }
   }
