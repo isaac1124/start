@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>온라인 번호표</title>
+    <meta
+      name="description"
+      content="온라인 번호표 발급 및 작업 상태 확인 서비스"
+    />
+  </head>
+  <body>
+    <main class="app-shell customer-page">
+      <section class="panel customer-panel">
+        <div class="top-header">
+          <span class="badge">온라인 번호표</span>
+        </div>
+
+        <div class="highlight-box">
+          <p class="label">현재 처리 중</p>
+          <p id="current-ticket" class="big-number">-</p>
+        </div>
+
+        <div class="highlight-box accent">
+          <p class="label">내 번호</p>
+          <p id="my-ticket" class="big-number">-</p>
+        </div>
+
+        <div class="meta-row">
+          <span id="waiting-count-text">앞에 0명</span>
+        </div>
+
+        <button id="ticket-button" class="primary-button" type="button">
+          번호표 받기
+        </button>
+
+        <div class="status-card">
+          <p class="label">번호표 상태</p>
+          <p id="ticket-status" class="status-value">확인 중</p>
+        </div>
+
+        <div id="message-box" class="message-box" aria-live="polite"></div>
+      </section>
+    </main>
+
+    <script type="module" src="/src/pages/customer.js"></script>
+  </body>
+</html>

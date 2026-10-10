@@ -1,0 +1,21 @@
+{
+  "name": "online-ticket-system",
+  "version": "1.0.0",
+  "description": "온라인 번호표 및 작업 완료 알림 시스템",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "deploy:rules": "firebase deploy --only firestore:rules",
+    "deploy:hosting": "firebase deploy --only hosting",
+    "deploy": "firebase deploy"
+  },
+  "dependencies": {
+    "firebase": "^10.7.1"
+  },
+  "devDependencies": {
+    "vite": "^5.0.10",
+    "firebase-tools": "^13.0.0"
+  }
+}

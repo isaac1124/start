@@ -1,0 +1,264 @@
+import '../styles/common.css';
+import '../styles/admin.css';
+
+import { getAuth } from 'firebase/auth';
+import { doc, getDoc, runTransaction, serverTimestamp } from 'firebase/firestore';
+
+import { auth, db } from '../firebase/config.js';
+import { isAdminUid, logoutUser } from '../services/auth.js';
+import {
+  subscribeToAllTickets,
+  subscribeToSettings,
+  TICKET_STATUS,
+  updateCurrentTicketNumber,
+  updateSystemSettings,
+  updateTicketStatus,
+} from '../services/tickets.js';
+
+const elements = {
+  currentTicket: document.querySelector('#admin-current-ticket'),
+  ticketList: document.querySelector('#ticket-list'),
+  message: document.querySelector('#admin-message'),
+  nextButton: document.querySelector('#call-next-button'),
+  refreshButton: document.querySelector('#refresh-button'),
+  logoutButton: document.querySelector('#logout-button'),
+  specificNumberInput: document.querySelector('#specific-number-input'),
+  callSpecificButton: document.querySelector('#call-specific-button'),
+};
+
+const state = {
+  settings: {
+    currentTicketNumber: 0,
+  },
+  tickets: [],
+};
+
+function showMessage(text, type = 'info') {
+  elements.message.textContent = text;
+  elements.message.className = 'message-box';
+
+  if (type === 'error') {
+    elements.message.classList.add('error');
+  } else if (type === 'success') {
+    elements.message.classList.add('success');
+  }
+}
+
+function getStatusText(status) {
+  const labels = {
+    [TICKET_STATUS.WAITING]: '대기 중',
+    [TICKET_STATUS.CALLED]: '호출됨',
+    [TICKET_STATUS.IN_PROGRESS]: '작업 중',
+    [TICKET_STATUS.COMPLETED]: '작업 완료',
+    [TICKET_STATUS.CANCELLED]: '취소됨',
+  };
+
+  return labels[status] ?? status;
+}
+
+function renderTicketList() {
+  if (!state.tickets.length) {
+    elements.ticketList.innerHTML = '<p class="empty-state">대기 중인 번호표가 없습니다.</p>';
+    return;
+  }
+
+  const sorted = [...state.tickets].sort((a, b) => Number(a.ticketNumber) - Number(b.ticketNumber));
+
+  elements.ticketList.innerHTML = sorted
+    .map((ticket) => {
+      const statusText = getStatusText(ticket.status);
+      const isCurrent = Number(ticket.ticketNumber) === Number(state.settings.currentTicketNumber);
+
+      return `
+        <div class="ticket-row ${isCurrent ? 'current' : ''}">
+          <span class="ticket-number">${ticket.ticketNumber}번</span>
+          <span class="ticket-status">${statusText}</span>
+          <div class="ticket-actions">
+            <button data-action="call" data-ticket-id="${ticket.id}" class="mini-button">호출</button>
+            <button data-action="start" data-ticket-id="${ticket.id}" class="mini-button">시작</button>
+            <button data-action="complete" data-ticket-id="${ticket.id}" class="mini-button">완료</button>
+            <button data-action="cancel" data-ticket-id="${ticket.id}" class="mini-button danger">취소</button>
+          </div>
+        </div>
+      `;
+    })
+    .join('');
+
+  document.querySelectorAll('[data-action]').forEach((button) => {
+    button.addEventListener('click', async () => {
+      const { action, ticketId } = button.dataset;
+      await handleTicketAction(action, ticketId);
+    });
+  });
+}
+
+function render() {
+  const currentNumber = Number(state.settings.currentTicketNumber ?? 0);
+  elements.currentTicket.textContent = currentNumber > 0 ? `${currentNumber}번` : '0번';
+  renderTicketList();
+}
+
+async function handleTicketAction(action, ticketId) {
+  const selectedTicket = state.tickets.find((ticket) => ticket.id === ticketId);
+
+  if (!selectedTicket) {
+    showMessage('해당 번호표를 찾을 수 없습니다.', 'error');
+    return;
+  }
+
+  try {
+    if (action === 'call') {
+      if (selectedTicket.status === TICKET_STATUS.COMPLETED || selectedTicket.status === TICKET_STATUS.CANCELLED) {
+        throw new Error('이미 완료되거나 취소된 번호는 호출할 수 없습니다.');
+      }
+
+      await updateTicketStatus(ticketId, TICKET_STATUS.CALLED, {
+        calledAt: serverTimestamp(),
+      });
+
+      await updateCurrentTicketNumber(Number(selectedTicket.ticketNumber));
+      showMessage(`${selectedTicket.ticketNumber}번 고객을 호출했습니다.`, 'success');
+    }
+
+    if (action === 'start') {
+      if (selectedTicket.status !== TICKET_STATUS.CALLED) {
+        throw new Error('호출된 번호만 작업을 시작할 수 있습니다.');
+      }
+
+      await updateTicketStatus(ticketId, TICKET_STATUS.IN_PROGRESS, {
+        startedAt: serverTimestamp(),
+      });
+      showMessage(`${selectedTicket.ticketNumber}번 작업을 시작했습니다.`, 'success');
+    }
+
+    if (action === 'complete') {
+      if (selectedTicket.status !== TICKET_STATUS.IN_PROGRESS) {
+        throw new Error('작업 중인 번호만 완료 처리할 수 있습니다.');
+      }
+
+      await updateTicketStatus(ticketId, TICKET_STATUS.COMPLETED, {
+        completedAt: serverTimestamp(),
+      });
+      showMessage(`${selectedTicket.ticketNumber}번 작업이 완료되었습니다.`, 'success');
+    }
+
+    if (action === 'cancel') {
+      if ([TICKET_STATUS.COMPLETED, TICKET_STATUS.CANCELLED].includes(selectedTicket.status)) {
+        throw new Error('완료되거나 이미 취소된 번호는 다시 취소할 수 없습니다.');
+      }
+
+      await updateTicketStatus(ticketId, TICKET_STATUS.CANCELLED, {
+        completedAt: null,
+      });
+      showMessage(`${selectedTicket.ticketNumber}번 번호표가 취소되었습니다.`, 'success');
+    }
+  } catch (error) {
+    console.error(error);
+    showMessage(error.message || '상태 변경에 실패했습니다.', 'error');
+  }
+}
+
+async function callNextTicket() {
+  const waitingTickets = state.tickets.filter((ticket) => ticket.status === TICKET_STATUS.WAITING);
+
+  if (!waitingTickets.length) {
+    showMessage('다음 호출할 번호가 없습니다.', 'error');
+    return;
+  }
+
+  const nextTicket = [...waitingTickets].sort((a, b) => Number(a.ticketNumber) - Number(b.ticketNumber))[0];
+
+  try {
+    await updateTicketStatus(nextTicket.id, TICKET_STATUS.CALLED, {
+      calledAt: serverTimestamp(),
+    });
+
+    await updateCurrentTicketNumber(Number(nextTicket.ticketNumber));
+    showMessage(`${nextTicket.ticketNumber}번 고객을 호출했습니다.`, 'success');
+  } catch (error) {
+    console.error(error);
+    showMessage(error.message || '다음 번호 호출에 실패했습니다.', 'error');
+  }
+}
+
+async function callSpecificTicket() {
+  const inputValue = elements.specificNumberInput.value.trim();
+
+  if (!inputValue) {
+    showMessage('호출할 번호를 입력해 주세요.', 'error');
+    return;
+  }
+
+  const ticketNumber = Number(inputValue);
+  const selectedTicket = state.tickets.find((ticket) => Number(ticket.ticketNumber) === ticketNumber);
+
+  if (!selectedTicket) {
+    showMessage('해당 번호의 티켓이 없습니다.', 'error');
+    return;
+  }
+
+  try {
+    if (selectedTicket.status === TICKET_STATUS.COMPLETED || selectedTicket.status === TICKET_STATUS.CANCELLED) {
+      throw new Error('완료되거나 취소된 번호는 호출할 수 없습니다.');
+    }
+
+    await updateTicketStatus(selectedTicket.id, TICKET_STATUS.CALLED, {
+      calledAt: serverTimestamp(),
+    });
+
+    await updateCurrentTicketNumber(ticketNumber);
+    showMessage(`${ticketNumber}번 고객을 호출했습니다.`, 'success');
+    elements.specificNumberInput.value = '';
+  } catch (error) {
+    console.error(error);
+    showMessage(error.message || '특정 번호 호출에 실패했습니다.', 'error');
+  }
+}
+
+async function verifyAdminAccess() {
+  const user = getAuth().currentUser;
+
+  if (!user) {
+    window.location.href = '/login.html';
+    return false;
+  }
+
+  const isAdmin = await isAdminUid(user.uid);
+
+  if (!isAdmin) {
+    await logoutUser();
+    window.location.href = '/login.html';
+    return false;
+  }
+
+  return true;
+}
+
+async function initializeAdminPage() {
+  const allowed = await verifyAdminAccess();
+  if (!allowed) {
+    return;
+  }
+
+  subscribeToSettings((settings) => {
+    state.settings = settings || { currentTicketNumber: 0 };
+    render();
+  });
+
+  subscribeToAllTickets((tickets) => {
+    state.tickets = tickets;
+    render();
+  });
+}
+
+elements.nextButton.addEventListener('click', callNextTicket);
+elements.refreshButton.addEventListener('click', () => location.reload());
+elements.logoutButton.addEventListener('click', async () => {
+  await logoutUser();
+  window.location.href = '/login.html';
+});
+elements.callSpecificButton.addEventListener('click', callSpecificTicket);
+
+window.addEventListener('DOMContentLoaded', () => {
+  initializeAdminPage();
+});

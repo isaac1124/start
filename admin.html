@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>관리자 페이지</title>
+  </head>
+  <body>
+    <main class="app-shell admin-page">
+      <section class="panel admin-panel">
+        <div class="admin-topbar">
+          <div>
+            <p class="label">관리자 페이지</p>
+            <h1>현재 처리 번호</h1>
+          </div>
+          <button id="logout-button" class="secondary-button" type="button">
+            로그아웃
+          </button>
+        </div>
+
+        <div class="highlight-box large">
+          <p id="admin-current-ticket" class="big-number">-</p>
+        </div>
+
+        <div class="admin-actions">
+          <button id="call-next-button" class="primary-button" type="button">
+            다음 번호 호출
+          </button>
+          <button id="refresh-button" class="secondary-button" type="button">
+            새로고침
+          </button>
+        </div>
+
+        <div class="specific-call-box">
+          <label for="specific-number-input">특정 번호 호출</label>
+          <div class="specific-call-row">
+            <input id="specific-number-input" type="number" min="1" placeholder="번호 입력" />
+            <button id="call-specific-button" class="secondary-button" type="button">
+              호출
+            </button>
+          </div>
+        </div>
+
+        <div id="admin-message" class="message-box" aria-live="polite"></div>
+
+        <div class="queue-section">
+          <h2>대기 번호 목록</h2>
+          <div id="ticket-list" class="ticket-list"></div>
+        </div>
+      </section>
+    </main>
+
+    <script type="module" src="/src/pages/admin.js"></script>
+  </body>
+</html>
